@@ -1,16 +1,26 @@
 import io
+import re
 import pandas as pd
 import streamlit as st
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 # Configuración de la página web
 st.set_page_config(page_title="Transformador de Archivos PSP", layout="centered")
 
 st.title("📄 Transformador de Archivos PSP")
-st.write("Sube tu archivo CSV de origen para limpiar los RUTs y calcular las validaciones automáticamente.")
+st.write("Sube tu archivo CSV o XLSX de origen para limpiar los RUTs y calcular las validaciones automáticamente.")
 
-# Función inteligente para leer CSV con cualquier separador o codificación
-def cargar_csv_inteligente(archivo_subido):
-    # Probar diferentes separadores y codificaciones habituales en Excel
+# --- FUNCIONES AUXILIARES ---
+
+def cargar_archivo_inteligente(archivo_subido):
+    """Carga CSV, TXT o XLSX probando separadores y codificaciones como STRING puro (dtype=str)."""
+    nombre_archivo = archivo_subido.name.lower()
+
+    if nombre_archivo.endswith('.xlsx') or nombre_archivo.endswith('.xls'):
+        archivo_subido.seek(0)
+        return pd.read_excel(archivo_subido, dtype=str)
+
     separadores = [';', ',', '\t', '|']
     codificaciones = ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']
 
@@ -18,82 +28,194 @@ def cargar_csv_inteligente(archivo_subido):
         for sep in separadores:
             try:
                 archivo_subido.seek(0)
-                df = pd.read_csv(archivo_subido, sep=sep, encoding=encoding)
-                # Si logró leer más de 1 columna, encontramos el formato correcto
+                df = pd.read_csv(archivo_subido, sep=sep, encoding=encoding, on_bad_lines='skip', dtype=str)
                 if len(df.columns) > 1:
                     return df
             except Exception:
                 continue
 
-    # Si todo lo anterior falla, intentar detección automática con motor python
     archivo_subido.seek(0)
-    return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip')
+    return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
 
-# 1. Botón para cargar el archivo CSV
-archivo_subido = st.file_uploader("Selecciona el archivo CSV de entrada", type=["csv", "txt"])
+def limpiar_rut(rut_val):
+    """Limpia puntos, guion, dígito verificador y ceros a la izquierda. Ej: 15.393.463-0 -> 15393463"""
+    if pd.isna(rut_val):
+        return ""
+    rut_str = str(rut_val).strip().replace('.', '')
+    if '-' in rut_str:
+        rut_str = rut_str.split('-')[0]
+    return rut_str.lstrip('0')
+
+def es_fecha_mes_anterior(fecha_val):
+    """Verifica si una fecha pertenece exactamente al mes anterior al actual."""
+    hoy = datetime.now()
+    primer_dia_mes_anterior = (hoy - relativedelta(months=1)).replace(day=1)
+    mes_esperado = primer_dia_mes_anterior.month
+    anio_esperado = primer_dia_mes_anterior.year
+
+    if pd.isna(fecha_val) or not str(fecha_val).strip():
+        return False
+
+    fecha_str = str(fecha_val).strip()
+    dt_parseada = None
+
+    match = re.search(r'(\d{1,2})\s+de\s+([a-zA-Za-z]+)\s+de\s+(\d{4})', fecha_str)
+    meses = {
+        'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+        'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+        'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+    }
+    
+    if match:
+        dia, mes_nombre, anio = match.groups()
+        mes_num = meses.get(mes_nombre.lower(), 1)
+        try:
+            dt_parseada = datetime(int(anio), mes_num, int(dia))
+        except Exception:
+            pass
+    else:
+        try:
+            dt_temp = pd.to_datetime(fecha_str, dayfirst=True)
+            if not pd.isna(dt_temp):
+                dt_parseada = dt_temp.to_pydatetime()
+        except Exception:
+            pass
+
+    if dt_parseada is None:
+        return False
+
+    return dt_parseada.month == mes_esperado and dt_parseada.year == anio_esperado
+
+def normalizar_fecha(fecha_val):
+    """
+    Normaliza la fecha y verifica que corresponda al mes anterior.
+    Si no corresponde al mes anterior (o si la fecha es inválida/vacía),
+    devuelve el primer día del mes anterior en formato DD/MM/YYYY.
+    """
+    hoy = datetime.now()
+    primer_dia_mes_anterior = (hoy - relativedelta(months=1)).replace(day=1)
+    fecha_defecto = primer_dia_mes_anterior.strftime('%d/%m/%Y')
+
+    if pd.isna(fecha_val) or not str(fecha_val).strip():
+        return fecha_defecto
+
+    fecha_str = str(fecha_val).strip()
+    dt_parseada = None
+
+    match = re.search(r'(\d{1,2})\s+de\s+([a-zA-Za-z]+)\s+de\s+(\d{4})', fecha_str)
+    meses = {
+        'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+        'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+        'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+    }
+
+    if match:
+        dia, mes_nombre, anio = match.groups()
+        mes_num = meses.get(mes_nombre.lower(), 1)
+        try:
+            dt_parseada = datetime(int(anio), mes_num, int(dia))
+        except Exception:
+            pass
+    else:
+        try:
+            dt_temp = pd.to_datetime(fecha_str, dayfirst=True)
+            if not pd.isna(dt_temp):
+                dt_parseada = dt_temp.to_pydatetime()
+        except Exception:
+            pass
+
+    if dt_parseada is None:
+        return fecha_defecto
+
+    if es_fecha_mes_anterior(fecha_val):
+        return dt_parseada.strftime('%d/%m/%Y')
+    else:
+        return fecha_defecto
+
+# --- INTERFAZ Y PROCESAMIENTO ---
+
+archivo_subido = st.file_uploader("Selecciona el archivo de entrada", type=["csv", "txt", "xlsx", "xls"])
 
 if archivo_subido is not None:
     try:
-        # Cargar archivo de forma robusta
-        df = cargar_csv_inteligente(archivo_subido)
+        df = cargar_archivo_inteligente(archivo_subido)
         
-        # -------------------------------------------------------------
-        # FILTRADO / ELIMINACIÓN DE REGISTROS CON ESTADO_BONO = 0 O APORTE_SEGURO = 0
-        # -------------------------------------------------------------
+        # Filtrado previo de estado_bono y aporte_seguro
         if 'estado_bono' in df.columns:
-            # Asegurar conversión numérica para comparar correctamente
             df = df[pd.to_numeric(df['estado_bono'], errors='coerce') != 0]
 
         if 'aporte_seguro' in df.columns:
-            # Asegurar conversión numérica para comparar correctamente
             df = df[pd.to_numeric(df['aporte_seguro'], errors='coerce') != 0]
-        # -------------------------------------------------------------
 
-        # Detectar la columna de bonificación automáticamente
         col_bonif = 'bonificacion_anterior' if 'bonificacion_anterior' in df.columns else 'bonificiacion_anterior'
 
-        # Función para limpiar los RUTs
-        def limpiar_rut(rut_val):
-            if pd.isna(rut_val):
-                return ""
-            rut_str = str(rut_val).strip()
-            if '-' in rut_str:
-                rut_str = rut_str.split('-')[0]
-            return rut_str.lstrip('0')
+        # 1. EVALUACIÓN Y ALERTAS DE FECHA
+        hoy = datetime.now()
+        primer_dia_mes_anterior = (hoy - relativedelta(months=1)).replace(day=1)
+        fecha_primer_dia_str = primer_dia_mes_anterior.strftime('%d/%m/%Y')
 
-        # 2. Aplicar las transformaciones
+        # Detectar cuáles registros no corresponden al mes anterior
+        es_valido_mask = df['fecha_emision'].apply(es_fecha_mes_anterior)
+        cant_fechas_incorrectas = (~es_valido_mask).sum()
+
+        accion_fechas = "Modificar fecha al primer día del mes anterior"
+
+        if cant_fechas_incorrectas > 0:
+            st.warning(f"⚠️ **Alerta de Fechas:** Se detectaron **{cant_fechas_incorrectas}** registros con fecha distinta al mes anterior.")
+            
+            accion_fechas = st.radio(
+                "¿Qué deseas hacer con las fechas que no corresponden al mes anterior?",
+                [
+                    f"Modificar fecha por el primer día del mes anterior ({fecha_primer_dia_str})",
+                    "Eliminar los registros con fecha distinta al mes anterior"
+                ]
+            )
+        else:
+            st.info("✅ **Validación de Fechas:** Todas las fechas pertenecen al mes anterior.")
+
+        # Aplicar el filtro de eliminación si el usuario lo seleccionó
+        if "Eliminar" in accion_fechas:
+            df = df[es_valido_mask].copy()
+
+        # 2. TRANSFORMACIÓN DE DATOS
         df_resultado = pd.DataFrame()
         df_resultado['PER_RUT'] = df['rut_titular'].apply(limpiar_rut)
-        df_resultado['BEN_FECTRX'] = pd.to_datetime(df['fecha_emision']).dt.strftime('%d/%m/%Y')
-        df_resultado['BEN_MONTOTPESOS'] = df['valor_total'] - df['aporte_financiador'] - df[col_bonif]
-        df_resultado['BEN_DCTOPESOS'] = df['aporte_seguro']
-        df_resultado['BEN_COPAGOPESOS'] = df['copago_beneficiario']
+
+        # Procesamiento de fecha según la opción seleccionada
+        if "Eliminar" in accion_fechas:
+            df_resultado['BEN_FECTRX'] = pd.to_datetime(df['fecha_emision'], dayfirst=True).dt.strftime('%d/%m/%Y')
+        else:
+            df_resultado['BEN_FECTRX'] = df['fecha_emision'].apply(normalizar_fecha)
+
+        # Cálculos de montos con conversiones seguras
+        valor_total = pd.to_numeric(df['valor_total'], errors='coerce').fillna(0)
+        aporte_financiador = pd.to_numeric(df['aporte_financiador'], errors='coerce').fillna(0)
+        bonif = pd.to_numeric(df[col_bonif], errors='coerce').fillna(0)
+        aporte_seguro = pd.to_numeric(df['aporte_seguro'], errors='coerce').fillna(0)
+        copago = pd.to_numeric(df['copago_beneficiario'], errors='coerce').fillna(0)
+
+        df_resultado['BEN_MONTOTPESOS'] = valor_total - aporte_financiador - bonif
+        df_resultado['BEN_DCTOPESOS'] = aporte_seguro
+        df_resultado['BEN_COPAGOPESOS'] = copago
         df_resultado['PREST_RUT'] = df['rut_prestador'].apply(limpiar_rut)
         
-        # -------------------------------------------------------------
-        # CÁLCULO INTERNO DE LA VALIDACIÓN Y ALERTAS
-        # -------------------------------------------------------------
-        # Calculamos la columna temporalmente
+        # 3. VALIDACIÓN DE CUADRATURA
         validacion_temp = df_resultado['BEN_MONTOTPESOS'] - df_resultado['BEN_DCTOPESOS'] - df_resultado['BEN_COPAGOPESOS']
         registros_no_cero = (validacion_temp.round(2) != 0).sum()
 
         st.success("¡Archivo procesado con éxito!")
 
-        # Mostrar la alerta según el resultado del cálculo
         if registros_no_cero > 0:
             st.warning(f"⚠️ **Atención:** Se encontraron **{registros_no_cero}** registros descuadrados (donde BEN_MONTOTPESOS - BEN_DCTOPESOS - BEN_COPAGOPESOS ≠ 0).")
         else:
             st.info("✅ **Validación impecable:** Todos los registros en la comprobación son iguales a 0.")
-        # -------------------------------------------------------------
 
-        # 3. Mostrar previsualización (ya sin la columna de validación)
+        # 4. PREVISUALIZACIÓN Y DESCARGA
         st.subheader("Vista previa de los datos procesados")
         st.dataframe(df_resultado.head(10))
 
-        # 4. Convertir a CSV para la descarga (ya sin la columna de validación)
         csv_resultado = df_resultado.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
-        # Botón para descargar a tu equipo
         st.download_button(
             label="⬇️ Descargar CSV Procesado",
             data=csv_resultado,
