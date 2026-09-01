@@ -38,13 +38,35 @@ def cargar_archivo_inteligente(archivo_subido):
     return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
 
 def limpiar_rut(rut_val):
-    """Limpia puntos, guion, dígito verificador y ceros a la izquierda."""
-    if pd.isna(rut_val):
+    """
+    Limpia puntos, guiones, ceros a la izquierda y remueve el dígito verificador (DV).
+    Ejemplos:
+      - '15.393.463-0' -> '15393463'
+      - '153934630'   -> '15393463'
+      - '15393463K'   -> '15393463'
+      - '76110809'    -> '76110809'
+    """
+    if pd.isna(rut_val) or rut_val is None:
         return ""
-    rut_str = str(rut_val).strip().replace('.', '')
+    
+    rut_str = str(rut_val).strip().upper().replace('.', '')
+    
+    # Caso 1: Viene con guion (ej: 15393463-0)
     if '-' in rut_str:
-        rut_str = rut_str.split('-')[0]
-    return rut_str.lstrip('0')
+        rut_cuerpo = rut_str.split('-')[0]
+        return rut_cuerpo.lstrip('0')
+    
+    # Caso 2: Viene sin guion
+    rut_limpio = re.sub(r'[^0-9K]', '', rut_str)
+    
+    if not rut_limpio:
+        return ""
+
+    # Si termina en K o la longitud indica que trae DV (>= 8 caracteres)
+    if rut_limpio.endswith('K') or len(rut_limpio) >= 8:
+        return rut_limpio[:-1].lstrip('0')
+    
+    return rut_limpio.lstrip('0')
 
 def limpiar_monto(val):
     """Convierte montos con puntos de miles a número entero exacto."""
