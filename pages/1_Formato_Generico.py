@@ -37,64 +37,36 @@ def cargar_archivo_inteligente(archivo_subido):
     archivo_subido.seek(0)
     return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
 
-def calcular_dv_chileno(cuerpo_rut):
-    """Calcula el Dígito Verificador oficial chileno usando el algoritmo Módulo 11."""
-    try:
-        cuerpo = str(cuerpo_rut).lstrip('0')
-        if not cuerpo.isdigit():
-            return None
-        
-        suma = 0
-        multiplicador = 2
-        for d in reversed(cuerpo):
-            suma += int(d) * multiplicador
-            multiplicador = 2 if multiplicador == 7 else multiplicador + 1
-        
-        resto = 11 - (suma % 11)
-        if resto == 11:
-            return '0'
-        elif resto == 10:
-            return 'K'
-        else:
-            return str(resto)
-    except Exception:
-        return None
-
-def limpiar_rut(rut_val):
+def limpiar_rut(rut_val, tiene_dv=True):
     """
-    Limpia puntos, guiones, ceros a la izquierda y valida matemáticamente mediante Módulo 11
-    si el campo incluye o no el dígito verificador al final para no cortar RUTs válidos.
+    Limpia puntos, espacios y ceros a la izquierda de un RUT.
+    
+    - Si contiene guión (ej: '15.393.463-0'): Remueve el guión y el DV.
+    - Si NO contiene guión:
+        - Si tiene_dv=True (ej: '153934630'): Remueve el último dígito.
+        - Si tiene_dv=False (ej: '15393463'): Mantiene el número completo.
     """
     if pd.isna(rut_val) or rut_val is None:
         return ""
     
     rut_str = str(rut_val).strip().upper().replace('.', '')
     
-    # Caso 1: Viene con guion explícito (Ej: 15393463-0)
+    # 1. Si viene con guión explícito, siempre se corta por el guión
     if '-' in rut_str:
         rut_cuerpo = rut_str.split('-')[0]
         return rut_cuerpo.lstrip('0')
     
-    # Limpiar caracteres que no sean dígitos o K
     rut_limpio = re.sub(r'[^0-9K]', '', rut_str)
     
     if not rut_limpio:
         return ""
-
-    # Caso 2: Termina en letra 'K' explícita
-    if rut_limpio.endswith('K'):
-        return rut_limpio[:-1].lstrip('0')
-
-    # Caso 3: Evaluación mediante Módulo 11 (para strings solo numéricos)
-    if len(rut_limpio) >= 7:
-        posible_cuerpo = rut_limpio[:-1]
-        posible_dv = rut_limpio[-1]
-        
-        # Validar si el último dígito es efectivamente el DV del resto del número
-        if calcular_dv_chileno(posible_cuerpo) == posible_dv:
-            return posible_cuerpo.lstrip('0')  # Tenía DV y se remueve
+    
+    # 2. Si el usuario indicó que el campo CONTIENE el DV al final (sin guión)
+    if tiene_dv:
+        if rut_limpio.endswith('K') or len(rut_limpio) >= 8:
+            return rut_limpio[:-1].lstrip('0')
             
-    # Si la validación falla (como en 19345149), el string completo es el cuerpo sin DV
+    # 3. Si NO trae DV, devolver el número completo
     return rut_limpio.lstrip('0')
 
 def limpiar_monto(val):
@@ -187,15 +159,20 @@ if archivo_subido is not None:
             idx_rut = obtener_indice_seguro(cols, ['rut_titular', 'rut_afiliado', 'rut_asistente', 'per_rut', 'rut'])
             col_per_rut = st.selectbox("Columna para **PER_RUT**:", cols, index=idx_rut)
 
+            # Checkbox para indicar si la columna PER_RUT trae el DV sin guión
+            per_rut_tiene_dv = st.checkbox("¿La columna **PER_RUT** incluye el Dígito Verificador?", value=False)
+
             idx_fecha = obtener_indice_seguro(cols, ['dia_actividad', 'fecha_emision', 'fecha', 'ben_fectrx'])
             col_fectrx = st.selectbox("Columna para **BEN_FECTRX** (Fecha):", cols, index=idx_fecha)
 
             origen_prest = st.radio("Origen para **PREST_RUT**:", ["Valor Fijo", "Columna del CSV"], index=1, horizontal=True, key="r_prest")
             if origen_prest == "Valor Fijo":
                 val_prest = st.text_input("RUT Fijo para PREST_RUT:", value="76110809", key="val_prest")
+                prest_rut_tiene_dv = False
             else:
                 idx_prest = obtener_indice_seguro(cols, ['rut_proveedor', 'rut_prestador', 'prest_rut'])
                 col_prest_rut = st.selectbox("Columna para **PREST_RUT**:", cols, index=idx_prest, key="sel_prest")
+                prest_rut_tiene_dv = st.checkbox("¿La columna **PREST_RUT** incluye el Dígito Verificador?", value=False, key="chk_prest_dv")
 
         with col2:
             st.markdown("#### 💰 Configuración de Montos")
@@ -227,7 +204,7 @@ if archivo_subido is not None:
         if st.button("🚀 Procesar y Generar CSV", type="primary"):
             df_resultado = pd.DataFrame()
 
-            df_resultado['PER_RUT'] = df_origen[col_per_rut].apply(limpiar_rut)
+            df_resultado['PER_RUT'] = df_origen[col_per_rut].apply(lambda x: limpiar_rut(x, tiene_dv=per_rut_tiene_dv))
             df_resultado['BEN_FECTRX'] = df_origen[col_fectrx].apply(normalizar_fecha)
 
             df_resultado['BEN_MONTOTPESOS'] = val_monto if origen_monto == "Valor Fijo" else df_origen[col_monto].apply(limpiar_monto)
@@ -235,9 +212,9 @@ if archivo_subido is not None:
             df_resultado['BEN_COPAGOPESOS'] = val_copago if origen_copago == "Valor Fijo" else df_origen[col_copago].apply(limpiar_monto)
 
             if origen_prest == "Valor Fijo":
-                df_resultado['PREST_RUT'] = limpiar_rut(val_prest)
+                df_resultado['PREST_RUT'] = limpiar_rut(val_prest, tiene_dv=False)
             else:
-                df_resultado['PREST_RUT'] = df_origen[col_prest_rut].apply(limpiar_rut)
+                df_resultado['PREST_RUT'] = df_origen[col_prest_rut].apply(lambda x: limpiar_rut(x, tiene_dv=prest_rut_tiene_dv))
 
             # Validar cuadratura
             validacion_temp = df_resultado['BEN_MONTOTPESOS'] - df_resultado['BEN_DCTOPESOS'] - df_resultado['BEN_COPAGOPESOS']
