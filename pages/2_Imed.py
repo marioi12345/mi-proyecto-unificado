@@ -37,7 +37,7 @@ def cargar_archivo_inteligente(archivo_subido):
     archivo_subido.seek(0)
     return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
 
- def limpiar_rut(rut_val):
+def limpiar_rut(rut_val):
     """Limpia puntos, guion, dígito verificador y ceros a la izquierda. Ej: 15.393.463-0 -> 15393463"""
     if pd.isna(rut_val):
         return ""
