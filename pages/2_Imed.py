@@ -46,8 +46,6 @@ def cargar_archivo_inteligente(archivo_subido):
         rut_str = rut_str.split('-')[0]
     return rut_str.lstrip('0')
 
-
-
 def es_fecha_mes_anterior(fecha_val):
     """Verifica si una fecha pertenece exactamente al mes anterior al actual."""
     hoy = datetime.now()
