@@ -37,35 +37,64 @@ def cargar_archivo_inteligente(archivo_subido):
     archivo_subido.seek(0)
     return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
 
+def calcular_dv_chileno(cuerpo_rut):
+    """Calcula el Dígito Verificador oficial chileno usando el algoritmo Módulo 11."""
+    try:
+        cuerpo = str(cuerpo_rut).lstrip('0')
+        if not cuerpo.isdigit():
+            return None
+        
+        suma = 0
+        multiplicador = 2
+        for d in reversed(cuerpo):
+            suma += int(d) * multiplicador
+            multiplicador = 2 if multiplicador == 7 else multiplicador + 1
+        
+        resto = 11 - (suma % 11)
+        if resto == 11:
+            return '0'
+        elif resto == 10:
+            return 'K'
+        else:
+            return str(resto)
+    except Exception:
+        return None
+
 def limpiar_rut(rut_val):
     """
-    Limpia puntos, guiones, ceros a la izquierda y remueve el dígito verificador (DV).
-    Ejemplos:
-      - '15.393.463-0' -> '15393463'
-      - '153934630'   -> '15393463'
-      - '15393463K'   -> '15393463'
-      - '76110809'    -> '76110809'
+    Limpia puntos, guiones, ceros a la izquierda y valida matemáticamente mediante Módulo 11
+    si el campo incluye o no el dígito verificador al final para no cortar RUTs válidos.
     """
     if pd.isna(rut_val) or rut_val is None:
         return ""
     
     rut_str = str(rut_val).strip().upper().replace('.', '')
     
-    # Caso 1: Viene con guion (ej: 15393463-0)
+    # Caso 1: Viene con guion explícito (Ej: 15393463-0)
     if '-' in rut_str:
         rut_cuerpo = rut_str.split('-')[0]
         return rut_cuerpo.lstrip('0')
     
-    # Caso 2: Viene sin guion
+    # Limpiar caracteres que no sean dígitos o K
     rut_limpio = re.sub(r'[^0-9K]', '', rut_str)
     
     if not rut_limpio:
         return ""
 
-    # Si termina en K o la longitud indica que trae DV (>= 8 caracteres)
-    if rut_limpio.endswith('K') or len(rut_limpio) >= 8:
+    # Caso 2: Termina en letra 'K' explícita
+    if rut_limpio.endswith('K'):
         return rut_limpio[:-1].lstrip('0')
-    
+
+    # Caso 3: Evaluación mediante Módulo 11 (para strings solo numéricos)
+    if len(rut_limpio) >= 7:
+        posible_cuerpo = rut_limpio[:-1]
+        posible_dv = rut_limpio[-1]
+        
+        # Validar si el último dígito es efectivamente el DV del resto del número
+        if calcular_dv_chileno(posible_cuerpo) == posible_dv:
+            return posible_cuerpo.lstrip('0')  # Tenía DV y se remueve
+            
+    # Si la validación falla (como en 19345149), el string completo es el cuerpo sin DV
     return rut_limpio.lstrip('0')
 
 def limpiar_monto(val):
