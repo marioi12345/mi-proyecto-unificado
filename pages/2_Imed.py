@@ -1,5 +1,6 @@
 import io
 import re
+import gc  # <--- Incorporación 1: Módulo de recolección de basura de Python
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -13,6 +14,8 @@ st.write("Sube tu archivo (CSV, TXT o XLSX) de origen para limpiar los RUTs y ca
 
 # --- FUNCIONES AUXILIARES ---
 
+# <--- Incorporación 2: TTL de 5 minutos (300 s) para evitar acumulaciones en RAM por archivos subidos
+@st.cache_data(ttl=300)
 def cargar_archivo_inteligente(archivo_subido):
     """Carga CSV, TXT o XLSX probando separadores y codificaciones como STRING puro (dtype=str)."""
     nombre_archivo = archivo_subido.name.lower()
@@ -36,6 +39,12 @@ def cargar_archivo_inteligente(archivo_subido):
 
     archivo_subido.seek(0)
     return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
+
+# <--- Incorporación 3: Función de purga de memoria explícita
+def liberar_memoria():
+    """Limpia la caché de datos de Streamlit y fuerza la liberación de memoria en el sistema."""
+    st.cache_data.clear()
+    gc.collect()
 
 def limpiar_rut(rut_val):
     """Limpia puntos, guion, dígito verificador y ceros a la izquierda. Ej: 15.393.463-0 -> 15393463"""
@@ -230,6 +239,9 @@ if archivo_subido is not None:
             file_name="resultado_transformado.csv",
             mime="text/csv"
         )
+
+        # <--- Incorporación 4: Liberación explícita de recursos al finalizar el cálculo y pintado de la pantalla
+        liberar_memoria()
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar el archivo: {e}")
