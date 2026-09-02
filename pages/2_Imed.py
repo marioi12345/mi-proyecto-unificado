@@ -1,6 +1,6 @@
 import io
 import re
-import gc  # <--- Incorporación 1: Módulo de recolección de basura de Python
+import gc
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -14,7 +14,6 @@ st.write("Sube tu archivo (CSV, TXT o XLSX) de origen para limpiar los RUTs y ca
 
 # --- FUNCIONES AUXILIARES ---
 
-# <--- Incorporación 2: TTL de 5 minutos (300 s) para evitar acumulaciones en RAM por archivos subidos
 @st.cache_data(ttl=300)
 def cargar_archivo_inteligente(archivo_subido):
     """Carga CSV, TXT o XLSX probando separadores y codificaciones como STRING puro (dtype=str)."""
@@ -40,7 +39,6 @@ def cargar_archivo_inteligente(archivo_subido):
     archivo_subido.seek(0)
     return pd.read_csv(archivo_subido, sep=None, engine='python', on_bad_lines='skip', dtype=str)
 
-# <--- Incorporación 3: Función de purga de memoria explícita
 def liberar_memoria():
     """Limpia la caché de datos de Streamlit y fuerza la liberación de memoria en el sistema."""
     st.cache_data.clear()
@@ -172,22 +170,21 @@ if archivo_subido is not None:
         es_valido_mask = df['fecha_emision'].apply(es_fecha_mes_anterior)
         cant_fechas_incorrectas = (~es_valido_mask).sum()
 
-        accion_fechas = "Modificar fecha al primer día del mes anterior"
-
         if cant_fechas_incorrectas > 0:
             st.warning(f"⚠️ **Alerta de Fechas:** Se detectaron **{cant_fechas_incorrectas}** registros con fecha distinta al mes anterior.")
             
             accion_fechas = st.radio(
-                "¿Qué deseas hacer con las fechas que no corresponden al mes anterior?",
+                "¿Qué deseas hacer con los registros cuyas fechas no corresponden al mes anterior?",
                 [
-                    f"Modificar fecha por el primer día del mes anterior ({fecha_primer_dia_str})",
-                    "Eliminar los registros con fecha distinta al mes anterior"
+                    "Eliminar los registros con fecha distinta al mes anterior",
+                    f"Modificar fecha por el primer día del mes anterior ({fecha_primer_dia_str})"
                 ]
             )
         else:
+            accion_fechas = "Modificar"
             st.info("✅ **Validación de Fechas:** Todas las fechas pertenecen al mes anterior.")
 
-        # Aplicar filtrado si el usuario elige eliminar registros
+        # Aplicar eliminación si el usuario selecciona esa opción
         if "Eliminar" in accion_fechas:
             df = df[es_valido_mask].copy()
 
@@ -240,7 +237,6 @@ if archivo_subido is not None:
             mime="text/csv"
         )
 
-        # <--- Incorporación 4: Liberación explícita de recursos al finalizar el cálculo y pintado de la pantalla
         liberar_memoria()
 
     except Exception as e:
