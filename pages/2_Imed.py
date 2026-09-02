@@ -66,6 +66,7 @@ def es_fecha_mes_anterior(fecha_val):
     fecha_str = str(fecha_val).strip()
     dt_parseada = None
 
+    # 1. Búsqueda por texto en español mediante Regex (ej: 21 de julio de 2026)
     match = re.search(r'(\d{1,2})\s+de\s+([a-zA-Za-z]+)\s+de\s+(\d{4})', fecha_str)
     meses = {
         'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
@@ -81,8 +82,9 @@ def es_fecha_mes_anterior(fecha_val):
         except Exception:
             pass
     else:
+        # 2. Parseo flexible para soportar estampas de tiempo con nanosegundos (ISO8601 / mixed)
         try:
-            dt_temp = pd.to_datetime(fecha_str, dayfirst=True)
+            dt_temp = pd.to_datetime(fecha_str, format='mixed', dayfirst=True)
             if not pd.isna(dt_temp):
                 dt_parseada = dt_temp.to_pydatetime()
         except Exception:
@@ -125,7 +127,7 @@ def normalizar_fecha(fecha_val):
             pass
     else:
         try:
-            dt_temp = pd.to_datetime(fecha_str, dayfirst=True)
+            dt_temp = pd.to_datetime(fecha_str, format='mixed', dayfirst=True)
             if not pd.isna(dt_temp):
                 dt_parseada = dt_temp.to_pydatetime()
         except Exception:
@@ -195,7 +197,7 @@ if archivo_subido is not None:
         df_resultado['PER_RUT'] = df['rut_titular'].apply(limpiar_rut)
         
         if "Eliminar" in accion_fechas:
-            df_resultado['BEN_FECTRX'] = pd.to_datetime(df['fecha_emision'], dayfirst=True).dt.strftime('%d/%m/%Y')
+            df_resultado['BEN_FECTRX'] = pd.to_datetime(df['fecha_emision'], format='mixed', dayfirst=True).dt.strftime('%d/%m/%Y')
         else:
             df_resultado['BEN_FECTRX'] = df['fecha_emision'].apply(normalizar_fecha)
         
